@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>DUROV MSG</title>
+  <link rel="icon" href="img/icon.png?v=20260919" />
+  <link rel="stylesheet" href="css/style.css?v=20260919" />
+</head>
+<body>
+  <div id="atmosphere-layer"></div>
+
+  <div id="onboarding" class="screen hidden">
+    <canvas id="bubbles"></canvas>
+    <div class="hero-card glass">
+      <div class="hero-logo"><img src="img/icon.png" alt="DUROV MSG" /></div>
+      <h1>DUROV <span>MSG</span></h1>
+      <p class="hero-sub">Анонимный мессенджер.<br/>Никаких номеров. Никаких следов. End‑to‑End шифрование.</p>
+      <div class="hero-stats">
+        <div><b>0</b><span>телефонов</span></div>
+        <div><b>∞</b><span>анонимности</span></div>
+        <div><b>E2E</b><span>шифрование</span></div>
+      </div>
+      <button id="btn-start" class="btn btn-primary big">Войти анонимно ✨</button>
+      <p class="hero-tip">Ни один ник не связан с твоей личностью. Крипто-ключ живёт только на твоём устройстве.</p>
+    </div>
+  </div>
+
+  <div id="register" class="screen hidden">
+    <div class="hero-card glass">
+      <div class="hero-logo small"><img src="img/icon.png" alt="DUROV MSG" /></div>
+      <h2>Придумай псевдоним</h2>
+      <div class="nick-row">
+        <button id="nick-emoji-btn" class="icon-btn" title="Эмодзи перед ником">😎</button>
+        <input id="nick-input" maxlength="60" placeholder="Твой анонимный ник (с эмодзи можно)" autocomplete="off" />
+      </div>
+      <div id="nick-emoji-panel" class="emoji-panel hidden"></div>
+      <button id="btn-register" class="btn btn-primary">Создать анонимный аккаунт 🔒</button>
+      <div id="reg-error" class="err-text hidden"></div>
+    </div>
+  </div>
+
+  <div id="app" class="app hidden">
+    <aside id="sidebar">
+      <div class="side-head">
+        <div class="brand"><span class="plane"><img src="img/icon.png" alt="" /></span>DUROV MSG</div>
+        <button id="btn-settings" class="icon-btn" title="Настройки">⚙️</button>
+      </div>
+      <div class="search-row">
+        <input id="search-input" placeholder="Найти чат или пользователя…" autocomplete="off" />
+        <div class="search-results hidden" id="search-results"></div>
+      </div>
+      <div class="side-actions">
+        <button id="btn-new-dm" class="chip">💬 ЛС</button>
+        <button id="btn-new-group" class="chip">👥 Группа</button>
+        <button id="btn-new-channel" class="chip">📢 Канал</button>
+      </div>
+      <div id="chat-list" class="chat-list"></div>
+      <div class="side-foot">
+        <div id="my-chip" class="chip-user"></div>
+        <button id="btn-offline" class="icon-btn" title="Показать скрытую анонимность">🕶️</button>
+      </div>
+    </aside>
+
+    <main id="main">
+      <div id="empty-state" class="empty">
+        <div class="empty-logo"><img src="img/icon.png" alt="DUROV MSG" /></div>
+        <h3>Выбери чат</h3>
+        <p>Слева — твои диалоги, группы и каналы.<br/>Анонимность включена по умолчанию.</p>
+      </div>
+
+      <div id="chat-view" class="hidden">
+        <header id="chat-header">
+          <div id="chat-avatar" class="avatar"></div>
+          <div class="chat-title-wrap">
+            <div id="chat-title"></div>
+            <div id="chat-subtitle" class="subtitle"></div>
+          </div>
+          <div class="head-actions">
+            <button id="btn-search" class="icon-btn" title="Поиск в чате">🔍</button>
+            <button id="btn-atmos" class="icon-btn" title="Атмосфера чата">🎆</button>
+            <button id="btn-info" class="icon-btn" title="Информация">ℹ️</button>
+          </div>
+        </header>
+
+        <div id="chat-search-bar" class="hidden">
+          <input id="chat-search-input" placeholder="Поиск по сообщениям…" autocomplete="off" />
+          <span id="chat-search-count" class="subtitle"></span>
+          <button id="chat-search-close" class="icon-btn">✕</button>
+        </div>
+
+        <div id="messages"></div>
+
+        <div id="typing-indicator" class="typing hidden"><span></span><span></span><span></span> печатает…</div>
+
+        <div id="rec-bar" class="rec-bar hidden">
+          <span class="rec-dot"></span> Запись голосового… <span id="rec-timer">0:00</span>
+          <button id="rec-cancel" class="icon-btn" title="Отменить">✕</button>
+          <button id="rec-done" class="btn primary" title="Отправить">➤</button>
+        </div>
+
+        <footer id="composer">
+          <div id="reply-bar" class="reply-bar hidden"></div>
+          <div class="composer-row">
+            <button id="btn-ghost" class="icon-btn" title="Призрачное сообщение (тает после просмотров / по таймеру)">🫥</button>
+            <button id="btn-sticker" class="icon-btn" title="Гифки и стикеры">🎬</button>
+            <button id="btn-emoji" class="icon-btn" title="Эмодзи">😊</button>
+            <button id="btn-card" class="icon-btn" title="Ник-карточка">📇</button>
+            <input id="msg-input" placeholder="Напиши сообщение…" autocomplete="off" />
+            <button id="btn-mic" class="icon-btn" title="Голосовое сообщение">🎤</button>
+            <button id="btn-image" class="icon-btn" title="Картинка / файл">📎</button>
+            <input type="file" id="file-input" hidden multiple />
+            <button id="btn-send" class="send-btn">➤</button>
+          </div>
+          <div id="ghost-panel" class="ghost-panel hidden">
+            <label class="ghost-timer">
+              ⏱ таймер
+              <select id="ghost-timer">
+                <option value="10000">10 сек</option>
+                <option value="30000">30 сек</option>
+                <option value="60000">1 мин</option>
+                <option value="300000" selected>5 мин</option>
+                <option value="0">нет</option>
+              </select>
+            </label>
+            <label class="ghost-views">
+              👁 просмотров
+              <select id="ghost-views">
+                <option value="0">нет</option>
+                <option value="1">1</option>
+                <option value="3">3</option>
+                <option value="5" selected>5</option>
+                <option value="10">10</option>
+              </select>
+            </label>
+            <div class="ghost-hint">🫥 Призрачные сообщения полностью удаляются со всех устройств и не оставляют следов на сервере.</div>
+          </div>
+          <div id="emoji-picker" class="emoji-panel hidden"></div>
+          <div id="sticker-picker" class="emoji-panel big hidden">
+            <div class="picker-tabs">
+              <button class="tab active" data-cat="st">Стикеры</button>
+              <button class="tab" data-cat="gif">Гифки</button>
+              <button class="tab" data-cat="url">По ссылке</button>
+            </div>
+            <div id="picker-body" class="picker-body"></div>
+          </div>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+
+  <div id="toast" class="toast hidden"></div>
+  <canvas id="fx-canvas"></canvas>
+
+  <script src="js/crypto.js?v=20260919"></script>
+  <script src="js/app.js?v=20260919"></script>
+</body>
+</html>

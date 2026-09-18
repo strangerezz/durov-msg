@@ -1,0 +1,48 @@
+{
+  "name": "durov-msg",
+  "version": "0.1.0",
+  "description": "DUROV MSG - анонимный мессенджер с E2E шифрованием",
+  "main": "desktop/main.js",
+  "author": "DUROV MSG Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "node server/index.js",
+    "desktop": "electron .",
+    "build:linux": "electron-builder --linux AppImage",
+    "build:win": "electron-builder --win portable",
+    "build:all": "electron-builder --linux AppImage --win portable"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.durovmsg.app",
+    "productName": "DUROV MSG",
+    "asar": false,
+    "files": [
+      "server/**/*",
+      "public/**/*",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Network",
+      "icon": "desktop/icon.png",
+      "maintainer": "durov-msg"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "desktop/icon.ico",
+      "signAndEditExecutable": false
+    }
+  }
+}
