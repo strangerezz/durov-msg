@@ -193,9 +193,10 @@ select { appearance: none; }
 .search-results {
   position: absolute; top: 52px; left: 14px; right: 14px; z-index: 30;
   background: var(--panel-solid); border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.5); max-height: 300px; overflow: auto;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5); max-height: 320px; overflow: auto;
   padding: 6px;
 }
+.sr-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); padding: 8px 10px 4px; }
 .side-actions { display: flex; gap: 8px; padding: 6px 14px 12px; }
 .chip {
   border: 1px solid var(--border); background: var(--input-bg); color: var(--text);
@@ -237,8 +238,9 @@ select { appearance: none; }
   display: inline-flex; align-items: center; justify-content: center;
   color: #fff; font-weight: 700; flex-shrink: 0; user-select: none;
 }
-.avatar { width: 46px; height: 46px; border-radius: 50%; font-size: 17px; }
-.mini-ava { width: 34px; height: 34px; border-radius: 50%; font-size: 13px; }
+.avatar { width: 46px; height: 46px; border-radius: 50%; font-size: 17px; position: relative; overflow: hidden; flex-shrink: 0; }
+.avatar img, .mini-ava img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mini-ava { width: 34px; height: 34px; border-radius: 50%; font-size: 13px; position: relative; overflow: hidden; flex-shrink: 0; }
 .big-ava { width: 92px; height: 92px; border-radius: 50%; font-size: 34px; margin-bottom: 12px; position: relative; }
 .big-ava.edit { cursor: pointer; }
 .big-ava.edit .ava-edit-hint {

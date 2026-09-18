@@ -120,16 +120,21 @@ function usernamesTaken(username) {
 }
 
 function searchUsers(q, excludeUid) {
-  const ql = q.toLowerCase();
-  const out = [];
+  const ql = q.replace(/^@/, '').toLowerCase();
+  const ranked = [];
   for (const x of users.values()) {
     if (x.uid === excludeUid) continue;
-    if (x.username.includes(ql) || x.nickname.toLowerCase().includes(ql)) {
-      out.push(sanitize(x));
-    }
-    if (out.length >= 12) break;
+    const un = x.username.toLowerCase();
+    const nn = (x.nickname || '').toLowerCase();
+    let score = -1;
+    if (un.startsWith(ql)) score = 0;
+    else if (nn.startsWith(ql)) score = 1;
+    else if (un.includes(ql)) score = 2;
+    else if (nn.includes(ql)) score = 3;
+    if (score >= 0) ranked.push([score, sanitize(x)]);
   }
-  return out;
+  ranked.sort((a, b) => a[0] - b[0]);
+  return ranked.slice(0, 15).map(([, u]) => u);
 }
 
 function sanitize(u) {

@@ -92,10 +92,15 @@
         return;
       }
       case 'profile_updated':
-        state.me = m.me;
-        if (state.myUsers.has(m.me.uid)) state.myUsers.set(m.me.uid, m.me);
-        renderMyChip();
-        updateChatHeaders();
+        if (m.me) {
+          state.me = m.me;
+          if (state.myUsers.has(m.me.uid)) state.myUsers.set(m.me.uid, m.me);
+          renderMyChip();
+        } else if (m.user) {
+          state.myUsers.set(m.user.uid, m.user);
+        }
+        renderChatList();
+        if (state.currentChatId && getChat(state.currentChatId)) renderOpenChat(getChat(state.currentChatId));
         rerenderMessages();
         if ($('modal-view-profile')) refreshProfileModal();
         return;
@@ -200,7 +205,20 @@
   }
   function chatAvatarStyle(c) {
     const name = chatTitle(c) || '?';
-    return { text: name.replace(/^\p{Extended_Pictographic}/u, '').trim().slice(0, 2) || (c.type === 'channel' ? '📢' : '💬'), pal: paletteFor(name) };
+    let img = c.avatar || null;
+    if (!img && c.type === 'dm') {
+      const o = dmOther(c);
+      if (o && o.avatar) img = o.avatar;
+    }
+    return { text: name.replace(/^\p{Extended_Pictographic}/u, '').trim().slice(0, 2) || (c.type === 'channel' ? '📢' : '💬'), pal: paletteFor(name), img };
+  }
+
+  function avatarHtml(av, cls) {
+    cls = cls || 'avatar';
+    const bg = `background:linear-gradient(135deg,${av.pal[0]},${av.pal[1]})`;
+    return av.img
+      ? `<div class="${cls}" style="${bg}"><img src="${esc(av.img)}" alt=""></div>`
+      : `<div class="${cls}" style="${bg}">${esc(av.text)}</div>`;
   }
 
   function paletteFor(name) {
@@ -230,7 +248,7 @@
       let statusDot = '';
       if (dm) { const o = dmOther(c); if (o && o.online) statusDot = '<i class="online-dot"></i>'; }
       item.innerHTML = `
-        <div class="avatar" style="background:linear-gradient(135deg,${av.pal[0]},${av.pal[1]})">${esc(av.text)}</div>
+        ${avatarHtml(av)}
         <div class="chat-item-main">
           <div class="chat-item-title">${esc(chatTitle(c))}</div>
           <div class="chat-item-last">${preview(c.id)}</div>
@@ -279,8 +297,11 @@
   function renderOpenChat(chat) {
     const c = getChat(chat.id) || chat;
     const av = chatAvatarStyle(c);
-    $('chat-avatar').style.background = `linear-gradient(135deg,${av.pal[0]},${av.pal[1]})`;
-    $('chat-avatar').textContent = av.text;
+    const avEl = $('chat-avatar');
+    avEl.style.background = `linear-gradient(135deg,${av.pal[0]},${av.pal[1]})`;
+    avEl.textContent = '';
+    if (av.img) avEl.innerHTML = `<img src="${esc(av.img)}" alt="">`;
+    else avEl.textContent = av.text;
     $('chat-title').textContent = chatTitle(c);
     refreshSubtitle();
     const mm = state.members.get(c.id) || new Map();
@@ -848,6 +869,7 @@
     }
     const chat = getChat(state.currentChatId);
     if (chat && chat.type === 'dm' && state.me) {
+      send({ t: 'msg_edit', chatId: state.currentChatId, id: m.id, meta: m.meta });
       rerenderMessages();
     } else {
       send({ t: 'msg_edit', chatId: state.currentChatId, id: m.id, meta: m.meta });
@@ -936,9 +958,9 @@
   function renderMyChip() {
     if (!state.me) return;
     const chip = $('my-chip');
-    const av = chatAvatarStyle({ ...(state.me || {}), type: 'dm', id: 0 });
+    const av = chatAvatarStyle({ ...state.me, type: 'dm', id: 0 });
     const nick = state.me.nickname || state.me.username;
-    chip.innerHTML = `<span class="mini-ava" style="background:linear-gradient(135deg,${av.pal[0]},${av.pal[1]})">${esc(av.text)}</span><span class="myname">${esc(nick)}</span>`;
+    chip.innerHTML = `${avatarHtml(av, 'mini-ava')}<span class="myname">${esc(nick)}</span>`;
     chip.onclick = () => openProfileModal(state.me.uid);
   }
   function updateChatHeaders() {
@@ -1349,21 +1371,51 @@
 
   // ---------------- search ----------------
   function renderSearch(users) {
-    if (!$('search-results') || $('search-results').classList.contains('hidden')) return;
+    window._lastUsers = users || [];
+    refreshSearchBox();
+  }
+
+  function refreshSearchBox() {
     const box = $('search-results');
+    if (!box) return;
+    const q = $('search-input').value.trim();
+    if (q.length < 1) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    box.classList.remove('hidden');
     box.innerHTML = '';
-    const searchVal = $('search-input').value.trim();
-    if (!users.length) { box.innerHTML = '<div class="hint">Никого не нашли</div>'; return; }
-    users.forEach((u) => {
-      const av = chatAvatarStyle(u);
-      const row = el('div', 'user-row', `
-        <span class="mini-ava" style="background:linear-gradient(135deg,${av.pal[0]},${av.pal[1]})">${esc(av.text)}</span>
-        <span class="uname">${esc(u.nickname || u.username)}</span>
-        <span class="uhandle">@${esc(u.username)}</span>
-      `);
-      row.onclick = () => { send({ t: 'dm_create', username: u.username }); $('search-input').value = ''; $('search-results').classList.add('hidden'); };
-      box.appendChild(row);
+    const ql = q.replace(/^@/, '').toLowerCase();
+    const chats = [...state.chats.values()].filter((c) => {
+      if (chatTitle(c).toLowerCase().includes(ql)) return true;
+      if (c.type === 'dm') {
+        const o = dmOther(c);
+        return !!(o && (o.username.toLowerCase().includes(ql) || (o.nickname || '').toLowerCase().includes(ql)));
+      }
+      return false;
     });
+    const users = (window._lastUsers || []).filter((u) =>
+      (u.nickname || '').toLowerCase().includes(ql) || u.username.toLowerCase().includes(ql));
+    if (chats.length) {
+      box.appendChild(el('div', 'sr-label', 'Чаты'));
+      chats.forEach((c) => {
+        const av = chatAvatarStyle(c);
+        const row = el('div', 'user-row');
+        row.innerHTML = `${avatarHtml(av, 'mini-ava')}<span class="uname">${esc(chatTitle(c))}</span><span class="uhandle">${c.type === 'dm' ? '💬 личные сообщения' : (c.type === 'channel' ? '📢 канал' : '👥 группа')}</span>`;
+        row.onclick = () => { openChat(c.id); $('search-input').value = ''; $('search-results').classList.add('hidden'); };
+        box.appendChild(row);
+      });
+    }
+    if (users.length) {
+      box.appendChild(el('div', 'sr-label', 'Пользователи'));
+      users.forEach((u) => {
+        const av = chatAvatarStyle(u);
+        const row = el('div', 'user-row');
+        row.innerHTML = `${avatarHtml(av, 'mini-ava')}<span class="uname">${esc(u.nickname || u.username)}</span><span class="uhandle">@${esc(u.username)}</span>`;
+        row.onclick = () => { send({ t: 'dm_create', username: u.username }); $('search-input').value = ''; $('search-results').classList.add('hidden'); };
+        box.appendChild(row);
+      });
+    }
+    if (!box.children.length) {
+      box.innerHTML = ql.length < 2 ? '<div class="hint">Продолжай печатать…</div>' : '<div class="hint">Никого не нашли</div>';
+    }
   }
 
   // ---------------- pickers ----------------
@@ -1794,12 +1846,16 @@
     document.querySelectorAll('.picker-tabs .tab').forEach((t) => t.onclick = () => setStickerTab(t.dataset.cat));
 
     $('search-input').addEventListener('input', debounce(() => {
-      const q = $('search-input').value.trim();
-      if (q.length > 1) {
-        $('search-results').classList.remove('hidden');
-        send({ t: 'search', q });
-      } else $('search-results').classList.add('hidden');
-    }, 300));
+      const q = $('search-input').value.trim().replace(/^@/, '');
+      if (q.length >= 2) send({ t: 'search', q });
+      refreshSearchBox();
+    }, 200));
+    $('search-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const first = $('search-results').querySelector('.user-row');
+        if (first) { e.preventDefault(); first.click(); }
+      }
+    });
     document.addEventListener('click', (e) => {
       if (!$('search-results').contains(e.target) && !$('search-input').contains(e.target)) {
         $('search-results').classList.add('hidden');

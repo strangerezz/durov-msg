@@ -128,12 +128,18 @@ function handleMessage(ws, raw) {
     }
     case 'group_create': {
       if (!uidVal) return;
-      const g = db.createChat({ type: 'group', owner: uidVal, title: msg.title, about: msg.about, members: [uidVal] });
+      const g = db.createChat({
+        type: 'group', owner: uidVal, title: msg.title, about: msg.about, members: [uidVal],
+        ...(msg.avatar !== undefined ? { avatar: msg.avatar } : {}),
+      });
       return sendTo(ws, { t: 'chat_created', chat: g });
     }
     case 'channel_create': {
       if (!uidVal) return;
-      const c = db.createChat({ type: 'channel', owner: uidVal, title: msg.title, about: msg.about, members: [uidVal] });
+      const c = db.createChat({
+        type: 'channel', owner: uidVal, title: msg.title, about: msg.about, members: [uidVal],
+        ...(msg.avatar !== undefined ? { avatar: msg.avatar } : {}),
+      });
       return sendTo(ws, { t: 'chat_created', chat: c });
     }
     case 'chat_open': {
@@ -227,11 +233,16 @@ function handleMessage(ws, raw) {
       if (!uidVal || !chatId) return;
       const chat = db.getChat(chatId);
       const m = db.getMessage(chatId, msg.id);
-      if (!m || m.sender !== uidVal || m.deleted) return;
-      const patch = { edited: true };
-      if (chat.type === 'dm') {
-        if (msg.cipher) patch.cipher = msg.cipher; else patch.payload = msg.payload;
-      } else patch.payload = msg.payload;
+      if (!m || m.deleted) return;
+      const isAuthor = m.sender === uidVal;
+      if (!isAuthor && !msg.meta) return; // чужие правки возможны только для meta (реакции)
+      const patch = {};
+      if (isAuthor) {
+        patch.edited = true;
+        if (chat.type === 'dm') {
+          if (msg.cipher) patch.cipher = msg.cipher; else patch.payload = msg.payload;
+        } else patch.payload = msg.payload;
+      }
       if (msg.meta) patch.meta = msg.meta;
       const updated = db.updateMessage(chatId, msg.id, patch);
       chatBroadcast(chatId, { t: 'msg_updated', chatId, message: decodeMsg(updated, uidVal) });
