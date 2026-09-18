@@ -10,6 +10,7 @@ function resolveDataDir() {
     const base = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
     return path.join(base, 'durov-msg', 'data');
   }
+  if (process.env.DUROV_DATA_DIR) return path.resolve(process.env.DUROV_DATA_DIR);
   return path.join(__dirname, '..', 'data');
 }
 

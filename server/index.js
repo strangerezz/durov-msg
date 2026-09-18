@@ -779,7 +779,8 @@ function bootstrapCollectibles() {
     }
   }
   ensurePoolAuctions();
-  setInterval(settleAuctions, 10000);
+  const TICK = Number(process.env.DUROV_AUCTION_TICK_MS) || 10000;
+  setInterval(settleAuctions, TICK);
 }
 
 function relayProfile(u) {

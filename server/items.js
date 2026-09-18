@@ -36,7 +36,7 @@ const COLLECTIBLE_NAMES = [
 ];
 
 const SELL_FEE_PERCENT = 10;
-const AUCTION_ROUND_SECONDS = 60 * 60 * 4; // стандартный срок аукциона
+const AUCTION_ROUND_SECONDS = Number(process.env.DUROV_AUCTION_ROUND_SECONDS) || (60 * 60 * 4); // стандартный срок аукциона (можно переопределить env для тестов)
 const AUCTION_TOP_ACCOUNTS = 3;            // сколько «слотов» выставляется на аукцион за раз
 const AUCTION_STEP = 50;                   // минимальный шаг ставки
 
