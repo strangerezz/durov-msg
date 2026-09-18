@@ -21,8 +21,73 @@
     typing: new Map(),
     replyTo: null,
     ghost: { timer: 300000, views: 5 },
+    hasMore: false,
     myUsers: new Map(),   // uid -> user (global profile cache)
+    balance: 0,
+    walletGifts: [],
+    walletNft: [],
+    nftCache: new Map(),  // slug -> public collectible
+    catalog: [],
+    switching: false,
   };
+
+  // ---------------- мультиаккаунт ----------------
+  const ACC_KEY = 'durov_accounts';
+  function accountsList() {
+    try { const a = JSON.parse(localStorage.getItem(ACC_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+    catch { return []; }
+  }
+  function accountsPersist(list) { try { localStorage.setItem(ACC_KEY, JSON.stringify(list)); } catch {} }
+  function accountsUpsert(me, token) {
+    const jwks = Crypto.getJwks() || {};
+    const list = accountsList().filter((x) => x.publicKeyPem !== me.pubkey);
+    list.forEach((x) => (x.active = false));
+    list.push({
+      username: me.username,
+      nickname: me.nickname,
+      publicKeyPem: me.pubkey,
+      publicJwk: jwks.publicJwk || null,
+      privateJwk: jwks.privateJwk || null,
+      token,
+      active: true,
+      ts: Date.now(),
+    });
+    accountsPersist(list);
+  }
+  function accountByToken(token) { return accountsList().find((a) => a.token === token) || null; }
+  function forgotAccount(x) { accountsPersist(accountsList().filter((a) => !(a.username === x.username && a.publicKeyPem === x.publicKeyPem))); }
+
+  function resetAppUi() {
+    state.me = null;
+    state.chats.clear();
+    state.members.clear();
+    state.messages = [];
+    state.currentChatId = null;
+    state.balance = 0;
+    state.walletGifts = [];
+    state.walletNft = [];
+    state.nftCache.clear();
+    state.catalog = [];
+    $('chat-view').classList.add('hidden');
+    $('empty-state').classList.remove('hidden');
+    renderChatList();
+    renderMyChip();
+    refreshWalletChip();
+  }
+
+  async function executeAccount(acc) {
+    state.token = acc.token;
+    localStorage.setItem('durov_token', acc.token);
+    if (acc.privateJwk && acc.publicJwk) {
+      try { await Crypto.setFromJwk(acc.publicKeyPem, acc.publicJwk, acc.privateJwk); } catch {}
+    }
+    const list = accountsList();
+    list.forEach((x) => (x.active = x.username === acc.username && x.publicKeyPem === acc.publicKeyPem));
+    accountsPersist(list);
+    resetAppUi();
+    if (state.ws) { state.switching = true; state.ws.close(); }
+    connect();
+  }
 
   const EMOJI_LIST = ['😀','😁','😂','🤣','😅','😊','😉','😍','🥰','😘','😎','🤓','🥳','😔','😢','😭','😤','😡','🤯','😱','🤠','👻','💀','👽','🤖','👾','🦄','🐱','🐶','🦊','🐼','🦁','🐸','🦅','🐸','🐵','🐷','🐙','🦋','🌹','🌻','🔥','⚡','💎','💥','✨','🎯','🎁','🏆','🚀','✈️','🎮','🎧','🎸','🍕','🍔','🍩','🍺','☕','💊','💉','🧠','👑','💍','🏴‍☠️','🔫','🧨','🔑','🧩','🎲','🎭','🌙','⭐','🌈','❄️','💧','🫥','✅','❌'];
 
@@ -69,6 +134,7 @@
       handle(m);
     };
     ws.onclose = () => {
+      if (state.switching) { state.switching = false; return; }
       if (!state.me) $('onboarding')?.classList.remove('hidden');
       showToast('⚠️ Потеряно соединение. Переподключение…');
       setTimeout(connect, 2000);
@@ -87,8 +153,10 @@
         state.token = m.token;
         localStorage.setItem('durov_token', m.token);
         state.myUsers.set(m.me.uid, m.me);
+        accountsUpsert(m.me, m.token);
         hideOnboarding();
         renderMyChip();
+        send({ t: 'wallet_get' });
         return;
       }
       case 'profile_updated':
@@ -108,6 +176,11 @@
         m.chats.forEach((c) => upsertChat(c));
         renderChatList();
         return;
+      case 'unread_update': {
+        const c = getChat(m.chatId);
+        if (c) { c.unread = m.unread; renderChatList(); updateTitle(); }
+        return;
+      }
       case 'dm_created':
         upsertChat(m.chat);
         state.myUsers.set(m.other.uid, m.other);
@@ -130,9 +203,34 @@
         m.members.forEach((u) => { mm.set(u.uid, u); state.myUsers.set(u.uid, u); });
         state.members.set(m.chat.id, mm);
         state.messages = m.messages;
+        state.hasMore = !!m.more;
+        jumpPendingId = null;
         renderChatList();
         renderOpenChat(m.chat);
         markSeen();
+        return;
+      }
+      case 'chat_more': {
+        if (state.currentChatId !== m.chatId) return;
+        const box = $('messages');
+        const prevHeight = box.scrollHeight;
+        const prevScrollTop = box.scrollTop;
+        Promise.all(m.messages.map((x) => promiseMsg(x))).then((decoded) => {
+          const known = new Set(state.messages.map((x) => x.id));
+          state.messages = [...decoded.filter((x) => !known.has(x.id)), ...state.messages];
+          state.messages.sort((a, b) => a.ts - b.ts);
+          state.hasMore = !!m.more;
+          rerenderMessages(true);
+          const nbox = $('messages');
+          nbox.scrollTop = prevScrollTop + (nbox.scrollHeight - prevHeight);
+          if (jumpPendingId) { const jid = jumpPendingId; jumpPendingId = null; jumpToMessage(jid); }
+        });
+        return;
+      }
+      case 'msg_search_results': {
+        mergeSearchResults(m.messages);
+        if (chatSearchActive) recomputeChatSearch();
+        rerenderMessages();
         return;
       }
       case 'chat_forced_close':
@@ -175,7 +273,121 @@
       case 'msg_deleted': handleDeletedMessage(m); return;
       case 'msg_seen': handleSeen(m); return;
       case 'typing': handleTyping(m); return;
-      case 'error': showToast('⛔ ' + m.msg); return;
+      case 'error':
+        showToast('⛔ ' + m.msg);
+        if (m.code === 'bad_token') {
+          state.token = '';
+          localStorage.removeItem('durov_token');
+          $('onboarding')?.classList.remove('hidden');
+        }
+        return;
+      case 'wallet': {
+        state.balance = m.balance || 0;
+        state.walletGifts = m.gifts || [];
+        state.walletNft = m.nft || [];
+        refreshWalletChip();
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      }
+      case 'wallet_update':
+        state.balance = m.balance || 0;
+        refreshWalletChip();
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'gifts_catalog': {
+        state.catalog = m.gifts || [];
+        state.balance = m.balance || 0;
+        refreshWalletChip();
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      }
+      case 'gift_bought':
+        showToast('🎁 Подарок добавлен в коллекцию');
+        state.balance = m.balance != null ? m.balance : state.balance;
+        refreshWalletChip();
+        send({ t: 'wallet_get' });
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'gift_sent':
+        showToast('🎁 Ты подарил «' + (m.gift ? m.gift.name : '') + '»');
+        state.balance = m.balance != null ? m.balance : state.balance;
+        refreshWalletChip();
+        send({ t: 'wallet_get' });
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'gift_received':
+        showToast('🎁 Тебе подарили «' + (m.gift ? m.gift.name : '') + '» (+' + (m.bonus || 0) + ' ⭐)');
+        state.balance = m.balance != null ? m.balance : state.balance;
+        refreshWalletChip();
+        if (state.me) send({ t: 'wallet_get' });
+        return;
+      case 'gift_upgraded':
+        showToast('💎 Подарок стал уникальным NFT!');
+        state.balance = m.balance != null ? m.balance : state.balance;
+        refreshWalletChip();
+        send({ t: 'wallet_get' });
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'gift_withdrawn':
+        showToast('💸 Подарок обменен на звёзды');
+        state.balance = m.balance != null ? m.balance : state.balance;
+        refreshWalletChip();
+        send({ t: 'wallet_get' });
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'nft_list':
+        m.auctions.forEach((c) => state.nftCache.set(c.slug, c));
+        m.mine.forEach((c) => state.nftCache.set(c.slug, c));
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'nft_update':
+        state.nftCache.set(m.c.slug, m.c);
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'nft_bid_ok':
+        showToast('✅ Ставка ' + m.amount + ' ⭐ принята');
+        state.balance = m.balance != null ? m.balance : state.balance;
+        refreshWalletChip();
+        if (m.c) state.nftCache.set(m.c.slug, m.c);
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'nft_bought':
+        showToast('💎 NFT @' + m.slug + ' теперь твой');
+        state.balance = m.balance != null ? m.balance : state.balance;
+        refreshWalletChip();
+        send({ t: 'wallet_get' });
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'nft_won':
+        showToast('🏆 Ты выиграл аукцион @' + m.slug + '!');
+        if (state.me) send({ t: 'wallet_get' });
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'nft_sold':
+        showToast('📢 Аукцион @' + m.slug + ' запущен');
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'nft_cancelled':
+        showToast('↩️ Аукцион @' + m.slug + ' снят');
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'nft_sold_out':
+        showToast('💰 @' + m.slug + ' продан! +' + (m.proceeds || 0) + ' ⭐ (минус комиссия)');
+        if (state.me) send({ t: 'wallet_get' });
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      case 'nft_claimed': {
+        if (m.me) {
+          state.me = m.me;
+          state.myUsers.set(m.me.uid, m.me);
+        }
+        showToast('👑 Юзернейм теперь @' + m.username + ' (NFT)');
+        renderMyChip();
+        if (state.currentChatId && getChat(state.currentChatId)) renderOpenChat(getChat(state.currentChatId));
+        if (state.me) send({ t: 'wallet_get' });
+        if ($('modal-wallet')) renderWalletModal();
+        return;
+      }
     }
   }
 
@@ -487,8 +699,8 @@
     });
   }
 
-  // ---------------- rendering messages ----------------
-  function rerenderMessages() {
+// ---------------- rendering messages ----------------
+function rerenderMessages(preserveScroll) {
     const box = $('messages');
     box.innerHTML = '';
     const frag = document.createDocumentFragment();
@@ -496,7 +708,14 @@
     let lastSender = null;
     let lastDayKey = null;
 
+    if (state.hasMore && !chatSearchActive) {
+      const moreBtn = el('button', 'load-more', '⬆ Загрузить старые сообщения');
+      moreBtn.onclick = loadOlder;
+      frag.appendChild(moreBtn);
+    }
+
     let msgs = state.messages;
+
     if (chatSearchActive && chatSearchQuery) {
       const matchedIds = new Set(chatSearchMatches.map((x) => x.id));
       msgs = state.messages.filter((m) => matchedIds.has(m.id));
@@ -526,7 +745,7 @@
       lastSender = mine ? 'me' : m.sender;
     }
     box.appendChild(frag);
-    scrollToBottom();
+    if (!preserveScroll) scrollToBottom();
     updateTicks();
   }
 
@@ -563,18 +782,22 @@
     } else if (m.kind === 'image') {
       bubble.classList.add('media');
       const img = el('img', 'chat-img', '');
-      img.src = m.payload && m.payload.src !== undefined ? m.payload.src : (m.payload || '');
+      img.src = m.payload?.url || m.payload?.src || m.payload || '';
       img.onclick = () => openImageModal(img.src);
       bubble.appendChild(img);
     } else if (m.kind === 'file') {
       bubble.appendChild(el('div', 'file-cell', esc(m.payload?.name || 'Файл')));
       const link = el('a', 'file-dl', '⬇️ Скачать');
-      link.href = m.payload?.src || '#';
+      link.href = m.payload?.url || m.payload?.src || '#';
       link.download = m.payload?.name || 'file';
       bubble.appendChild(link);
     } else {
-      if (m.quote && m.quote.text) {
-        bubble.appendChild(el('div', 'quoted', '↪️ ' + esc(m.quote.text.slice(0, 60))));
+      const quote = m.meta?.reply || m.quote;
+      if (quote && (quote.text || quote.id)) {
+        const q = el('div', 'quoted pointer');
+        q.textContent = '↪️ ' + replyLabel(quote);
+        q.onclick = () => jumpToMessage(quote.id);
+        bubble.appendChild(q);
       }
       const p = el('div', 'bubble-text', linkify(esc(textOf(m))));
       bubble.appendChild(p);
@@ -591,6 +814,13 @@
     }
     if (m.edited) foot.appendChild(el('span', 'edited', 'изменено'));
     bubble.appendChild(foot);
+
+    if (!m.meta?.ghost && m.kind !== 'ghost') {
+      const rp = el('button', 'react-plus', '🙂');
+      rp.title = 'Реакция';
+      rp.onclick = (e) => { e.stopPropagation(); openReactionPicker(m); };
+      bubble.appendChild(rp);
+    }
 
     if (needsAuthor) {
       const head = el('div', 'msg-author');
@@ -649,7 +879,7 @@
     const bar = el('div', 'voice-bar', '');
     const time = el('span', 'voice-time', fmtDur(dur));
     wrap.append(play, bar, time);
-    const audioURL = m.payload?.audio;
+    const audioURL = m.payload?.audio || m.payload?.url;
     let audio = null;
     play.onclick = () => {
       if (!audio) {
@@ -770,6 +1000,31 @@
     });
   }
 
+  function loadOlder() {
+    if (!state.hasMore || !state.messages.length) return;
+    const before = state.messages[0].ts;
+    send({ t: 'chat_more', chatId: state.currentChatId, before });
+  }
+
+  function mergeSearchResults(msgs) {
+    if (!msgs || !msgs.length) return;
+    const known = new Set(state.messages.map((m) => m.id));
+    for (const m of msgs) { if (!known.has(m.id)) state.messages.push(m); }
+    state.messages.sort((a, b) => a.ts - b.ts);
+  }
+
+  // ---------------- upload helper ----------------
+  async function uploadBlob(blob) {
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': blob.type || 'application/octet-stream', 'Authorization': 'Bearer ' + (state.token || '') },
+      body: blob,
+    });
+    if (!res.ok) throw new Error('upload failed');
+    const j = await res.json();
+    return j.url;
+  }
+
   // ---------------- composing ----------------
   function ensureDecryptableText() {
     const c = getChat(state.currentChatId);
@@ -878,6 +1133,16 @@
     maybeFx({ payload: e });
   }
 
+  function openReactionPicker(m) {
+    const cells = EMOJI_LIST.map((e, i) =>
+      `<button class="reaction-pick" data-e="${i}">${e}</button>`
+    ).join('');
+    openModal(modalShell('Реакция', `<div class="reaction-grid">${cells}</div>`));
+    modalRoot().querySelectorAll('.reaction-pick').forEach((b) => {
+      b.onclick = () => { toggleReaction(m, EMOJI_LIST[Number(b.dataset.e)]); modalRoot().innerHTML = ''; };
+    });
+  }
+
   function maybeFx(m) {
     if (!m || m._fx) return;
     const e = (m.payload && m.payload.e) || m.meta?.fx || m.payload;
@@ -956,13 +1221,28 @@
 
   // ---------------- my chip / profile ----------------
   function renderMyChip() {
-    if (!state.me) return;
     const chip = $('my-chip');
+    const wchip = $('wallet-chip');
+    if (!state.me) {
+      $('btn-switch-acc').classList.add('hidden');
+      if (wchip) wchip.classList.add('hidden');
+      return;
+    }
     const av = chatAvatarStyle({ ...state.me, type: 'dm', id: 0 });
     const nick = state.me.nickname || state.me.username;
     chip.innerHTML = `${avatarHtml(av, 'mini-ava')}<span class="myname">${esc(nick)}</span>`;
     chip.onclick = () => openProfileModal(state.me.uid);
+    if (wchip) {
+      wchip.classList.remove('hidden');
+      wchip.firstElementChild.textContent = fmtStars(state.balance);
+    }
+    $('btn-switch-acc').classList.remove('hidden');
   }
+  function refreshWalletChip() {
+    const wchip = $('wallet-chip');
+    if (wchip) wchip.firstElementChild.textContent = fmtStars(state.balance);
+  }
+  function fmtStars(n) { return (n | 0) + '⭐'; }
   function updateChatHeaders() {
     if (!state.currentChatId) return;
     const c = getChat(state.currentChatId);
@@ -1107,6 +1387,161 @@
     root.querySelector('.p-username').textContent = '@' + u.username;
   }
 
+  // ---------------- кошелёк: звёзды / подарки / NFT ----------------
+  function openWalletModal() {
+    send({ t: 'wallet_get' });
+    send({ t: 'gifts_catalog' });
+    send({ t: 'nft_list' });
+    renderWalletModal();
+  }
+
+  function renderWalletModal() {
+    document.querySelectorAll('.modal-overlay').forEach((o) => { if (o.querySelector('#modal-wallet')) o.remove(); });
+    openModal(modalShell('🪙 Кошелёк', `
+      <div id="modal-wallet">
+        <div class="wallet-balance">${fmtStars(state.balance)}</div>
+        <div class="wallet-tabs">
+          <button class="wtab active" data-wtab="gifts">🎁 Подарки</button>
+          <button class="wtab" data-wtab="mine">🎒 Моё</button>
+          <button class="wtab" data-wtab="nft">💎 NFT-юзернеймы</button>
+        </div>
+        <div class="wallet-page" id="wpage-gifts">${catalogHtml()}</div>
+        <div class="wallet-page hidden" id="wpage-mine">${mineHtml()}</div>
+        <div class="wallet-page hidden" id="wpage-nft">${nftHtml()}</div>
+        <div class="hint">⭐ Звёзды стартуют с 500. Они капают за полученные подарки и продажу NFT — и тратятся на каталог и аукционы. Продажа идёт с комиссией 10%.</div>
+      </div>`));
+
+    document.querySelectorAll('.wtab').forEach((t) => {
+      t.onclick = () => {
+        document.querySelectorAll('.wtab').forEach((x) => x.classList.remove('active'));
+        t.classList.add('active');
+        ['gifts', 'mine', 'nft'].forEach((p) => {
+          $('wpage-' + p).classList.toggle('hidden', t.dataset.wtab !== p);
+        });
+      };
+    });
+
+    document.querySelectorAll('[data-buy]').forEach((b) => {
+      b.onclick = () => send({ t: 'gift_buy', giftId: b.dataset.buy });
+    });
+    document.querySelectorAll('[data-send]').forEach((b) => {
+      b.onclick = () => {
+        const to = prompt('Кому подарить? Введи юзернейм @…');
+        if (to) send({ t: 'gift_send', giftId: b.dataset.send, toUsername: to.toLowerCase().replace(/^@/, '').trim() });
+      };
+    });
+    document.querySelectorAll('[data-sendcopy]').forEach((b) => {
+      b.onclick = () => {
+        const c = state.walletGifts[+b.dataset.sendcopy];
+        if (!c) return;
+        const to = prompt('Кому подарить «' + c.name + '»? Введи юзернейм @…');
+        if (to) send({ t: 'gift_send', giftId: c.giftId, toUsername: to.toLowerCase().replace(/^@/, '').trim() });
+      };
+    });
+    document.querySelectorAll('[data-upgrade]').forEach((b) => {
+      b.onclick = () => {
+        const c = state.walletGifts[+b.dataset.upgrade];
+        if (!c) return;
+        if (confirm('Апгрейд «' + c.name + '» в уникальный NFT-подарок?')) send({ t: 'gift_upgrade', copy: c.copy });
+      };
+    });
+    document.querySelectorAll('[data-withdraw]').forEach((b) => {
+      b.onclick = () => {
+        const c = state.walletGifts[+b.dataset.withdraw];
+        if (!c) return;
+        if (confirm('Вывести «' + c.name + '» и получить звёзды обратно?')) send({ t: 'gift_withdraw', copy: c.copy });
+      };
+    });
+    document.querySelectorAll('[data-bid]').forEach((b) => {
+      b.onclick = () => {
+        const inp = b.parentElement.querySelector('input');
+        send({ t: 'nft_bid', slug: b.dataset.bid, amount: inp ? inp.value : '' });
+      };
+    });
+    document.querySelectorAll('[data-buynow]').forEach((b) => {
+      b.onclick = () => send({ t: 'nft_buy_now', slug: b.dataset.buynow });
+    });
+    document.querySelectorAll('[data-sell]').forEach((b) => {
+      b.onclick = () => {
+        const inp = b.parentElement.querySelector('input');
+        const minBid = inp ? parseInt(inp.value, 10) : 0;
+        if (!minBid || minBid <= 0) return showToast('Укажи минимальную ставку');
+        send({ t: 'nft_sell', slug: b.dataset.sell, minBid });
+      };
+    });
+    document.querySelectorAll('[data-cancel]').forEach((b) => {
+      b.onclick = () => send({ t: 'nft_cancel', slug: b.dataset.cancel });
+    });
+    document.querySelectorAll('[data-claim]').forEach((b) => {
+      b.onclick = () => send({ t: 'nft_claim', slug: b.dataset.claim });
+    });
+  }
+
+  function catalogHtml() {
+    if (!state.catalog.length) return '<div class="hint">Каталог загружается…</div>';
+    return '<div class="gift-grid">' + state.catalog.map((g) => `
+      <div class="gift-card">
+        <div class="gift-emoji">${g.emoji}</div>
+        <div class="gift-name">${esc(g.name)}</div>
+        <div class="gift-price">${g.price}⭐</div>
+        ${g.remains != null ? `<div class="gift-remains">осталось ${g.remains}/${g.total}</div>` : ''}
+        ${g.per_user_deal ? `<div class="gift-remains">лимит ${g.per_user_deal}/чел</div>` : ''}
+        ${g.upgrade ? `<div class="gift-remains">апгрейд ${g.upgrade}⭐</div>` : ''}
+        <div class="gift-row"><button class="btn small" data-buy="${g.id}">Купить</button><button class="btn small alt" data-send="${g.id}">Дарить</button></div>
+      </div>`).join('') + '</div>';
+  }
+
+  function mineHtml() {
+    if (!state.walletGifts.length) return '<div class="hint">Пока пусто. Купи или получи подарок в «Подарках».</div>';
+    return '<div class="gift-grid">' + state.walletGifts.map((c, i) => {
+      const cfg = state.catalog.find((x) => x.id === c.giftId);
+      return `
+      <div class="gift-card mine">
+        <div class="gift-emoji">${c.emoji}${c.unique ? '<div class="nft-badge">NFT</div>' : ''}</div>
+        <div class="gift-name">${esc(c.name)}</div>
+        <div class="gift-sub">${c.from ? 'от ' + esc(c.fromName || 'кого-то') : 'купил(а) себе'}</div>
+        ${c.token ? `<div class="gift-sub">🔑 token ${esc(c.token)}</div>` : ''}
+        <div class="gift-row">
+          <button class="btn small alt" data-sendcopy="${i}">Дарить</button>
+          ${cfg && cfg.upgrade && !c.unique ? `<button class="btn small" data-upgrade="${i}">💎 Апгрейд</button>` : ''}
+          ${!c.unique ? `<button class="btn small danger" data-withdraw="${i}">💸</button>` : ''}
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+  }
+
+  function nftHtml() {
+    const auctions = [...state.nftCache.values()].filter((c) => c.status === 'auction');
+    const mine = state.me ? [...state.nftCache.values()].filter((c) => c.owner === state.me.uid) : [];
+    let html = '<div class="hint">Коллекционные юзернеймы (фрагмент-стиль) продаются на аукционах. Заняв такой — меняешь свой юзернейм на NFT.</div>';
+    html += '<h4>Аукционы</h4>';
+    if (!auctions.length) html += '<div class="hint">Сейчас лотов нет…</div>';
+    html += auctions.map((c) => `
+      <div class="nft-card">
+        <div class="nft-slug">@${esc(c.slug)}</div>
+        <div class="nft-cur">текущая ставка: ${c.cur || c.base || 0}⭐${c.buyNow ? ' · выкуп ' + c.buyNow + '⭐' : ''}</div>
+        <div class="nft-end">${c.endAt ? 'до ' + new Date(c.endAt).toLocaleString('ru-RU') : ''}</div>
+        <div class="nft-row">
+          <input class="nft-bid" type="number" min="1" placeholder="шаг +50"> <button class="btn small" data-bid="${esc(c.slug)}">Ставка</button>
+          ${c.buyNow ? `<button class="btn small alt" data-buynow="${esc(c.slug)}">Купить сейчас</button>` : ''}
+        </div>
+      </div>`).join('');
+    html += '<h4>Мои NFT</h4>';
+    if (!mine.length) html += '<div class="hint">У тебя пока нет коллекционных юзернеймов.</div>';
+    html += mine.map((c) => `
+      <div class="nft-card mine">
+        <div class="nft-slug">@${esc(c.slug)} <span class="nft-badge mine">NFT</span></div>
+        <div class="nft-cur">статус: ${c.status === 'owned' ? 'у тебя' : 'на аукционе'}</div>
+        ${c.status === 'owned' ? `
+          <div class="nft-row">
+            <input class="nft-list-min" type="number" min="1" placeholder="мин. ставка"> <button class="btn small" data-sell="${esc(c.slug)}">На аукцион</button>
+            <button class="btn small danger" data-claim="${esc(c.slug)}">Сделать юзернеймом</button>
+          </div>` : `
+          <button class="btn small danger" data-cancel="${esc(c.slug)}">Снять аукцион</button>`}
+      </div>`).join('');
+    return html;
+  }
+
   function openSettingsProfile() {
     const u = state.me;
     if (!u) return;
@@ -1169,6 +1604,58 @@
     };
   }
 
+  // ---------------- аккаунты ----------------
+  function openAccountsModal() {
+    const list = accountsList();
+    const rows = list.length ? list.map((a) => `
+      <div class="acc-row ${a.active ? 'sel' : ''}">
+        <button class="btn ${a.active ? 'primary' : ''}" data-acc="${esc(a.username)}|${esc(a.publicKeyPem)}">${a.active ? '✓ ' : ''}${esc(a.nickname || a.username)} <span class="subtitle">@${esc(a.username)}</span></button>
+        <button class="icon-btn danger" data-forget="${esc(a.username)}" title="Забыть аккаунт">🗑</button>
+      </div>`).join('') : '<div class="hint">Аккаунтов пока нет.</div>';
+    openModal(modalShell('📱 Аккаунты', `
+      <div class="acc-list">${rows}</div>
+      <button class="btn primary full" id="btn-new-acc">➕ Новый аккаунт</button>
+    `));
+    document.querySelectorAll('[data-acc]').forEach((b) => {
+      b.onclick = () => {
+        const [u, key] = b.dataset.acc.split('|');
+        const a = accountsList().find((x) => x.username === u && x.publicKeyPem === key);
+        if (a) { executeAccount(a); modalRoot().innerHTML = ''; }
+      };
+    });
+    document.querySelectorAll('[data-forget]').forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const u = b.dataset.forget;
+        const list = accountsList().filter((x) => x.username !== u);
+        if (state.me && state.me.username === u) {
+          accountsPersist(list);
+          logoutClean();
+        } else {
+          accountsPersist(list);
+          openAccountsModal();
+        }
+      };
+    });
+    $('btn-new-acc').onclick = () => {
+      modalRoot().innerHTML = '';
+      $('onboarding').classList.remove('hidden');
+      $('app').classList.add('hidden');
+      $('register').classList.remove('hidden');
+    };
+  }
+
+  function logoutClean() {
+    state.token = '';
+    localStorage.removeItem('durov_token');
+    Crypto.clearStored();
+    resetAppUi();
+    $('onboarding').classList.remove('hidden');
+    $('app').classList.add('hidden');
+    if (state.ws) { state.switching = true; state.ws.close(); }
+    connect();
+  }
+
   function openSettings() {
     const s = state.settings;
     const themes = ['auto', 'dark', 'light'].map((t) => `<button class="opt-chip ${s.theme === t ? 'sel' : ''}" data-k="theme" data-v="${t}">${t === 'auto' ? '🌗 авто' : t === 'dark' ? '🌙 тёмная' : '☀️ светлая'}</button>`).join('');
@@ -1206,11 +1693,20 @@
       </div>
       <div class="tab-page hidden" id="tab-profile"><div id="settings-profile-slug"></div></div>
       <div class="tab-page hidden" id="tab-privacy">
-        <div class="info-box">🔐 DUROV MSG не хранит твои номера, e-mail и IP-адреса связанные с личностью.
-          Личные сообщения шифруются на устройстве (E2E). Сервер хранит только шифротекст.</div>
-        <div class="info-box">🫥 Призрачные сообщения полностью исчезают после просмотров или по таймеру.</div>
+        <div class="info-box">🔐 DUROV MSG не хранит номера, e-mail и IP связанные с личностью.
+          Личные сообщения шифруются на устройстве (E2E). В группах и каналах текст живёт на сервере открытым — это оговорено.</div>
+        <div class="info-box">🫥 Призрачные сообщения полностью исчезают после просмотров или по таймеру (даже если сервер перезапущен).</div>
         <div class="info-box">⚡ Для максимальной анонимности используй DUROV MSG через Tor или свой VPN.</div>
         <label class="switch"><input type="checkbox" id="opt-ghost-default" ${state.settings.ghostDefault ? 'checked' : ''}><span>Помечать все сообщения как призрачные</span></label>
+        <div class="form-row bk-row"><label>Резервная копия ключа 🔑</label>
+          <input type="password" id="bk-pass" placeholder="Пароль для ключа (мин. 8 символов)" autocomplete="new-password">
+          <div class="nick-row">
+            <button class="btn" id="btn-bk-export">⬇️ Скачать копию</button>
+            <button class="btn" id="btn-bk-import">⬆️ Восстановить</button>
+            <input type="file" id="bk-file" hidden accept=".dupvk,application/json,text/plain">
+          </div>
+          <div class="hint">Копия = твой секретный ключ + токен аккаунта, зашифрованные паролем. Без неё потеря устройства = потеря доступа к старым ЛС.</div>
+        </div>
       </div>
     `, `<button class="btn primary" id="btn-close-settings">Готово ✨</button>`));
 
@@ -1252,6 +1748,40 @@
     $('opt-ghost-default').onchange = (e) => { state.settings.ghostDefault = e.target.checked; saveSettings(); };
     $('btn-download-chat').onclick = downloadChatExport;
     $('btn-close-settings').onclick = () => { modalRoot().innerHTML = ''; };
+
+    $('btn-bk-export').onclick = async () => {
+      const pass = $('bk-pass').value;
+      if (pass.length < 8) return showToast('Пароль минимум 8 символов');
+      if (!Crypto.hasIdentity()) return showToast('Ключ ещё не создан');
+      try {
+        const key = await Crypto.exportBackup(pass);
+        const blob = new Blob([JSON.stringify({ app: 'DUROV-MSG', token: state.token, key }, null, 2)], { type: 'application/json' });
+        const a = el('a', '', '');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'durov-backup.dupvk';
+        document.body.appendChild(a); a.click(); a.remove();
+        $('bk-pass').value = '';
+        showToast('🔑 Резервная копия сохранена');
+      } catch (e) { showToast('⛔ Не удалось сохранить копию'); }
+    };
+    $('btn-bk-import').onclick = () => $('bk-file').click();
+    $('bk-file').onchange = async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const pass = $('bk-pass').value;
+      if (!pass) return showToast('Введи пароль от копии');
+      try {
+        const data = JSON.parse(await f.text());
+        if (!data || data.app !== 'DUROV-MSG' || !data.key) throw new Error('bad file');
+        await Crypto.importBackup(data.key, pass);
+        if (data.token) localStorage.setItem('durov_token', data.token);
+        showToast('🔑 Ключ восстановлен. Перезапуск…');
+        setTimeout(() => location.reload(), 700);
+      } catch (err) {
+        showToast('⛔ Неверный пароль или повреждённый файл');
+      }
+      e.target.value = '';
+    };
     $('tab-profile') && openProfileSlug();
 
     function openProfileSlug() {
@@ -1483,13 +2013,51 @@
   }
 
   // ---------------- reply ----------------
+  function replyIcon(kind) {
+    return { image: '🖼', file: '📎', voice: '🎙', gif: '😀', sticker: '🦄', card: '👤', text: '', ghost: '' }[kind] || '';
+  }
+  function replyLabel(quote) {
+    const prefix = replyIcon(quote.kind);
+    const head = quote.name ? (quote.name + ': ') : '';
+    const body = quote.text || '';
+    return prefix + ' ' + head + body;
+  }
   function setReply(m) {
-    state.replyTo = { id: m.id, text: textOf(m).slice(0, 80) };
-    $('reply-bar').innerHTML = '↪️ ' + esc(state.replyTo.text) + '<button class="modal-close" id="reply-close">✕</button>';
-    $('reply-bar').classList.remove('hidden');
-    $('reply-close').onclick = () => { state.replyTo = null; hideReplyBar(); };
+    const sender = m.sender && state.myUsers.get(m.sender);
+    const nick = sender ? (sender.nickname || sender.username) : '';
+    const kind = m.kind || 'text';
+    const text = (textOf(m) || '').slice(0, 80);
+    state.replyTo = { id: m.id, text, name: nick, kind };
+    const bar = $('reply-bar');
+    bar.innerHTML = '';
+    bar.appendChild(el('span', '', '↪️ ' + replyIcon(kind) + ' ' + esc((nick ? nick + ': ' : '') + text)));
+    const x = el('button', 'modal-close', '✕');
+    x.onclick = () => { state.replyTo = null; hideReplyBar(); };
+    bar.appendChild(x);
+    bar.classList.remove('hidden');
   }
   function hideReplyBar() { $('reply-bar').classList.add('hidden'); }
+
+  function jumpToMessage(id) {
+    if (id == null) return;
+    const sel = '[data-mid="' + String(id).replace(/"/g, '\\"') + '"]';
+    const tryScroll = () => {
+      const box = $('messages');
+      const el0 = box.querySelector(sel);
+      if (el0) {
+        const top = el0.getBoundingClientRect().top + box.scrollTop - box.getBoundingClientRect().top - 110;
+        box.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+        el0.classList.add('flash-target');
+        setTimeout(() => el0.classList.remove('flash-target'), 900);
+        return true;
+      }
+      return false;
+    };
+    if (tryScroll()) return;
+    if (!state.hasMore || chatSearchActive) return showToast('Сообщение не загружено');
+    jumpPendingId = id;
+    loadOlder();
+  }
 
   // ---------------- message menu ----------------
   function bubbleMenu(e, m, mine) {
@@ -1641,13 +2209,13 @@
     stream.getTracks().forEach((t) => t.stop());
     clearInterval(recTimerInterval);
     if (!audioChunks.length) return;
-    const blob = new Blob(audioChunks, { type: 'audio/webm' });
-    const reader = new FileReader();
-    reader.onload = () => {
-      const duration = (Date.now() - recStartTime) / 1000;
-      sendMessage('voice', { audio: reader.result, duration, kind: 'voice' });
-    };
-    reader.readAsDataURL(blob);
+    const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType || 'audio/webm' });
+    const duration = (Date.now() - recStartTime) / 1000;
+    uploadBlob(blob).then((url) => {
+      sendMessage('voice', { url, duration, kind: 'voice' });
+    }).catch(() => {
+      showToast('⛔ Не удалось загрузить голосовое. Попробуй ещё раз.');
+    });
   }
   function stopRecording() {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
@@ -1659,6 +2227,7 @@
   let chatSearchActive = false;
   let chatSearchQuery = '';
   let chatSearchMatches = [];
+  let jumpPendingId = null;
   function toggleChatSearch() {
     chatSearchActive = !chatSearchActive;
     $('chat-search-bar').classList.toggle('hidden', !chatSearchActive);
@@ -1667,13 +2236,26 @@
   }
   function updateChatSearch() {
     chatSearchQuery = ($('chat-search-input')?.value || '').trim().toLowerCase();
-    if (!chatSearchQuery) { $('chat-search-count').textContent = ''; rerenderMessages(); return; }
+    const countEl = $('chat-search-count');
+    if (!chatSearchQuery) {
+      if (countEl) countEl.textContent = '';
+      chatSearchMatches = [];
+      rerenderMessages();
+      return;
+    }
+    if (state.currentChatId && chatSearchQuery.length >= 2) {
+      send({ t: 'msg_search', chatId: state.currentChatId, q: chatSearchQuery });
+    }
+    recomputeChatSearch();
+    if (countEl) countEl.textContent = chatSearchMatches.length ? `${chatSearchMatches.length} совпадений` : 'Ничего';
+    rerenderMessages();
+  }
+  function recomputeChatSearch() {
     chatSearchMatches = state.messages.filter((m) => {
+      if (m.deleted) return false;
       const txt = typeof m.payload === 'string' ? m.payload : (m.payload?.text || '');
       return txt.toLowerCase().includes(chatSearchQuery);
     });
-    $('chat-search-count').textContent = chatSearchMatches.length ? `${chatSearchMatches.length} совпадений` : 'Ничего';
-    rerenderMessages();
   }
   // ---------------- atmosphere per chat ----------------
   function openAtmosphereModal() {
@@ -1748,6 +2330,8 @@
     startAmbientBubbles();
 
     $('btn-start').onclick = () => { $('onboarding').classList.add('hidden'); $('register').classList.remove('hidden'); };
+    $('btn-back-accounts').onclick = () => openAccountsModal();
+    if (accountsList().length) $('btn-back-accounts').classList.remove('hidden');
 
     // nickname emoji strip on register
     const buildStrip = (panelId, targetId) => {
@@ -1768,30 +2352,37 @@
 
     $('btn-register').onclick = async () => {
       const nick = $('nick-input').value.trim();
+      const username = $('reg-user').value.trim().toLowerCase();
       if (!nick) return $('reg-error').textContent = 'Придумай ник 😉';
+      if (!/^[a-z0-9_]{3,32}$/.test(username)) return $('reg-error').textContent = 'Юзернейм: 3–32 символа, только латиница/цифры/_.';
       $('reg-error').classList.remove('hidden');
       $('reg-error').textContent = 'Генерирую крипто-ключи…';
       const kp = await Crypto.generateIdentity();
       Crypto.setIdentity(kp);
-      try { localStorage.setItem('durov_priv', JSON.stringify(kp)); } catch {}
-      const username = 'u' + Math.random().toString(36).slice(2, 8);
-      send({ t: 'register', username, nickname: nick, pubkey: Crypto.getPublic() });
+      send({ t: 'register', username, nickname: nick, pubkey: Crypto.getPublic(), ownerCode: $('owner-code').value.trim() });
       $('reg-error').textContent = '';
       $('reg-error').classList.add('hidden');
     };
 
     // try restore identity / token
     (async () => {
-      const stored = localStorage.getItem('durov_priv');
-      if (stored) {
-        try { Crypto.setIdentity(JSON.parse(stored)); } catch { localStorage.removeItem('durov_priv'); }
+      if (state.token) {
+        const acc = accountByToken(state.token);
+        try {
+          if (acc && acc.privateJwk) await Crypto.setFromJwk(acc.publicKeyPem, acc.publicJwk, acc.privateJwk);
+          else await Crypto.restoreFromStorage();
+        } catch { await Crypto.restoreFromStorage(); }
+      } else {
+        await Crypto.restoreFromStorage();
       }
-      return stored;
-    })().then(() => connect());
+      connect();
+    })();
 
     // events
     $('btn-settings').onclick = openSettings;
     $('btn-offline').onclick = () => showToast('🕶️ Ты анонимен: нет ни номера, ни email, ни следа.');
+    $('wallet-chip').onclick = openWalletModal;
+    $('btn-switch-acc').onclick = openAccountsModal;
     $('btn-new-dm').onclick = openNewDm;
     $('btn-new-group').onclick = () => openNewGroup(false);
     $('btn-new-channel').onclick = () => openNewGroup(true);
@@ -1815,14 +2406,15 @@
     $('btn-image').onclick = () => $('file-input').click();
     $('file-input').onchange = async (e) => {
       for (const f of [...e.target.files]) {
-        if (f.type.startsWith('image/')) {
-          const src = await readResizeImage(f, 1280);
-          const isGif = f.type === 'image/gif';
-          if (isGif) sendMessage('image', { src, name: f.name });
-          else sendMessage('image', { src, name: f.name });
-        } else {
-          const src = await readResizeImage(f, 1280);
-          sendMessage('file', { src, name: f.name, kind: 'file' });
+        try {
+          const url = await uploadBlob(f);
+          if (f.type.startsWith('image/')) {
+            sendMessage('image', { url, name: f.name, size: f.size });
+          } else {
+            sendMessage('file', { url, name: f.name, size: f.size, kind: 'file' });
+          }
+        } catch {
+          showToast('⛔ Не удалось загрузить «' + (f.name || 'файл') + '».');
         }
       }
       e.target.value = '';

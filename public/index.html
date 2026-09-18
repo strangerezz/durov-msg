@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <title>DUROV MSG</title>
-  <link rel="icon" href="img/icon.png?v=20260922" />
-  <link rel="stylesheet" href="css/style.css?v=20260922" />
+  <link rel="icon" href="img/icon.png?v=20260922d" />
+  <link rel="stylesheet" href="css/style.css?v=20260922d" />
 </head>
 <body>
   <div id="atmosphere-layer"></div>
@@ -22,6 +22,7 @@
         <div><b>E2E</b><span>шифрование</span></div>
       </div>
       <button id="btn-start" class="btn btn-primary big">Войти анонимно ✨</button>
+      <button id="btn-back-accounts" class="btn ghost-btn hidden">🔄 Другой аккаунт</button>
       <p class="hero-tip">Ни один ник не связан с твоей личностью. Крипто-ключ живёт только на твоём устройстве.</p>
     </div>
   </div>
@@ -29,12 +30,19 @@
   <div id="register" class="screen hidden">
     <div class="hero-card glass">
       <div class="hero-logo small"><img src="img/icon.png" alt="DUROV MSG" /></div>
-      <h2>Придумай псевдоним</h2>
+      <h2>Придумай юзернейм</h2>
+      <div class="nick-row">
+        <input id="reg-user" maxlength="32" placeholder="уникальный юзернейм — только латиница/цифры/_, от 3 символов" autocomplete="off" />
+      </div>
       <div class="nick-row">
         <button id="nick-emoji-btn" class="icon-btn" title="Эмодзи перед ником">😎</button>
-        <input id="nick-input" maxlength="60" placeholder="Твой анонимный ник (с эмодзи можно)" autocomplete="off" />
+        <input id="nick-input" maxlength="60" placeholder="Отображаемый ник (можно с эмодзи)" autocomplete="off" />
       </div>
       <div id="nick-emoji-panel" class="emoji-panel hidden"></div>
+      <details class="owner-code-box">
+        <summary class="owner-code-sum">👑 владелец? (зарезервированный юзернейм)</summary>
+        <input id="owner-code" class="owner-code" type="password" placeholder="секретный код владельца" autocomplete="off" />
+      </details>
       <button id="btn-register" class="btn btn-primary">Создать анонимный аккаунт 🔒</button>
       <div id="reg-error" class="err-text hidden"></div>
     </div>
@@ -57,7 +65,9 @@
       </div>
       <div id="chat-list" class="chat-list"></div>
       <div class="side-foot">
+        <button id="wallet-chip" class="chip-user wallet-chip hidden" title="Кошелёк: звёзды, подарки, NFT"><span>0⭐</span></button>
         <div id="my-chip" class="chip-user"></div>
+        <button id="btn-switch-acc" class="icon-btn hidden" title="Переключить аккаунт">🔄</button>
         <button id="btn-offline" class="icon-btn" title="Показать скрытую анонимность">🕶️</button>
       </div>
     </aside>
@@ -154,7 +164,7 @@
   <div id="toast" class="toast hidden"></div>
   <canvas id="fx-canvas"></canvas>
 
-  <script src="js/crypto.js?v=20260922"></script>
-  <script src="js/app.js?v=20260922"></script>
+  <script src="js/crypto.js?v=20260922d"></script>
+  <script src="js/app.js?v=20260922d"></script>
 </body>
 </html>
