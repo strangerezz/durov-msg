@@ -31,47 +31,19 @@ function createWindow(port) {
     minWidth: 860,
     minHeight: 600,
     title: 'DUROV MSG',
-    backgroundColor: '#0f172a',
+    backgroundColor: '#0f1117',
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, 'preload.js'),
       spellcheck: false,
+      autoplayPolicy: 'no-user-gesture-required',
     },
+    icon: path.join(__dirname, 'icon.png'),
   });
 
   win.loadURL(`http://127.0.0.1:${port}`);
-  win.webContents.on('did-finish-load', async () => {
-    console.log('[main] did-finish-load OK', win.webContents.getURL());
-    try {
-      const info = await win.webContents.executeJavaScript(`
-        JSON.stringify({ title: document.title, nodes: document.querySelectorAll('*').length, text: (document.body.innerText || '').slice(0, 200), htmlLen: document.documentElement.outerHTML.length })
-      `);
-      console.log('[main] DOM:', info);
-    } catch (e) { console.log('[main] DOM err', String(e)); }
-    setTimeout(async () => {
-      try {
-        const info = await win.webContents.executeJavaScript(`
-          (function () {
-            const visible = [...document.querySelectorAll('body *')].filter((el) => {
-              const st = getComputedStyle(el); return st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null;
-            });
-            return JSON.stringify({
-              visibleCount: visible.length,
-              visibleText: (document.body.innerText || '').slice(0, 120),
-              onboarding: !!document.querySelector('#onboarding, .onboarding, #login-screen'),
-              modal: !!document.querySelector('#modal-root > *, #modal, #modal-shell'),
-              token: !!localStorage.getItem('durov_token'),
-              hasCrypto: !!window.CryptoLib || !!(window.Crypto && Crypto),
-              bodyBg: getComputedStyle(document.body).background,
-            });
-          })()
-        `);
-        console.log('[main] DOM2:', info);
-      } catch (e) { console.log('[main] DOM2 err', String(e)); }
-    }, 2500);
-  });
   win.webContents.on('did-fail-load', (e, code, desc, url) => console.log('[main] did-fail-load', code, desc, url));
   win.webContents.on('render-process-gone', (e, details) => console.log('[main] render-process-gone', JSON.stringify(details)));
   win.webContents.on('console-message', (e, level, message, line, sourceId) => {
@@ -79,6 +51,7 @@ function createWindow(port) {
   });
   win.webContents.on('unresponsive', () => console.log('[main] renderer UNRESPONSIVE'));
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://127.0.0.1:') || url.startsWith('http://localhost:')) return { action: 'allow' };
     shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -87,13 +60,12 @@ function createWindow(port) {
     {
       label: 'DUROV MSG',
       submenu: [
-        { label: 'Открыть в браузере', click: () => shell.openExternal(`http://127.0.0.1:${port}`) },
-        { type: 'separator' },
         { role: 'togglefullscreen' },
         { role: 'quit' },
       ],
     },
     { label: 'Вид', role: 'viewMenu' },
+    { label: 'Правка', role: 'editMenu' },
   ]);
   Menu.setApplicationMenu(menu);
 }

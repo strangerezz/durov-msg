@@ -1,6 +1,6 @@
 {
   "name": "durov-msg",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "DUROV MSG - анонимный мессенджер с E2E шифрованием",
   "main": "desktop/main.js",
   "author": "DUROV MSG Team",

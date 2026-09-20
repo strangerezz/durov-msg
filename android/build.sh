@@ -22,10 +22,9 @@ mkdir -p "$A_DIR/build/obj" "$A_DIR/build/gen" "$A_DIR/build/dex" "$A_DIR/build/
     --auto-add-overlay "$A_DIR/build/res.zip"
 
 "$JAVA_HOME/bin/javac" -source 8 -target 8 \
-    -bootclasspath "$PLATFORM/android.jar" \
     -classpath "$PLATFORM/android.jar:$A_DIR/build/gen" \
     -d "$A_DIR/build/obj" \
-    "$A_DIR/src/com/durovmsg/MainActivity.java"
+    "$A_DIR"/src/com/durovmsg/*.java
 
 jar cf "$A_DIR/build/classes.jar" -C "$A_DIR/build/obj" .
 "$BT/d8" --release --lib "$PLATFORM/android.jar" --min-api 21 \
@@ -56,8 +55,8 @@ fi
 
 "$BT/apksigner" sign --ks "$KS" --ks-key-alias durov \
     --ks-pass pass:durov123 --key-pass pass:durov123 \
-    --out "$A_DIR/build/apk/durov-msg-0.4.0.apk" "$A_DIR/build/apk/aligned.apk"
+    --out "$A_DIR/build/apk/durov-msg-0.5.0.apk" "$A_DIR/build/apk/aligned.apk"
 
-"$BT/apksigner" verify "$A_DIR/build/apk/durov-msg-0.4.0.apk"
-cp "$A_DIR/build/apk/durov-msg-0.4.0.apk" "$A_DIR/../dist/"
-echo "OK: dist/durov-msg-0.4.0.apk"
+"$BT/apksigner" verify "$A_DIR/build/apk/durov-msg-0.5.0.apk"
+cp "$A_DIR/build/apk/durov-msg-0.5.0.apk" "$A_DIR/../dist/"
+echo "OK: dist/durov-msg-0.5.0.apk"
