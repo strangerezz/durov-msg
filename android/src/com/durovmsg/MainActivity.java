@@ -294,7 +294,11 @@ public class MainActivity extends Activity {
                     members.put(c.optString("id"), mm);
                     messages.clear();
                     JSONArray msgs = m.optJSONArray("messages");
-                    for (int i = 0; i < len(msgs); i++) messages.add(msgs.getJSONObject(i));
+                    for (int i = 0; i < len(msgs); i++) {
+                        JSONObject mm2 = msgs.getJSONObject(i);
+                        cacheDecrypt(mm2);
+                        messages.add(mm2);
+                    }
                     messages.sort(BY_TS);
                     if (msgList != null) {
                         msgAdapter = new MsgAdapter();
@@ -524,7 +528,7 @@ public class MainActivity extends Activity {
                     break;
                 }
                 case "msg_search_results": {
-                    JSONArray results = m.optJSONArray("results");
+                    JSONArray results = m.optJSONArray("messages");
                     List<String> lines = new ArrayList<>();
                     for (int i = 0; i < len(results); i++) {
                         JSONObject r = results.getJSONObject(i);
@@ -558,6 +562,7 @@ public class MainActivity extends Activity {
         boolean self = m.optBoolean("self");
         String cid = m.optString("chatId");
         JSONObject c = chats.get(cid);
+        cacheDecrypt(mm);
         if (self) {
             for (int i = 0; i < messages.size(); i++) {
                 if (messages.get(i).optString("id").equals(mm.optString("id"))) { messages.set(i, mm); break; }
@@ -584,6 +589,26 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {}
         }
         if (msgAdapter != null) renderChatList();
+    }
+
+    void cacheDecrypt(JSONObject m) {
+        if (m == null || !m.has("cipher") || !crypto.hasIdentity()) return;
+        String id = m.optString("id");
+        if (id.isEmpty() || decrypted.containsKey(id)) return;
+        String cid = m.optString("chatId");
+        JSONObject chat = chats.get(cid);
+        JSONObject peer = chat != null ? dmOther(chat) : null;
+        if (peer == null) return;
+        String pub = peer.optString("pubkey");
+        if (pub.isEmpty()) return;
+        try {
+            String plain = crypto.decryptFrom(pub, m.getJSONObject("cipher"));
+            try {
+                JSONObject p = new JSONObject(plain);
+                if (p.has("text")) plain = p.optString("text");
+            } catch (JSONException ignored) {}
+            decrypted.put(id, plain);
+        } catch (Exception ignored) {}
     }
 
     void markSeen() {
@@ -721,34 +746,111 @@ public class MainActivity extends Activity {
         return l;
     }
 
-    // ===================== экран: подключение =====================
+    // ===================== экран: онбординг (как в мессенджере) =====================
     void showConnectScreen() {
-        ScrollView sc = new ScrollView(this);
         LinearLayout l = col();
-        l.setPadding(28, 60, 28, 28);
+        l.setPadding(32, 72, 32, 32);
+        l.setGravity(Gravity.CENTER_HORIZONTAL);
 
-        TextView title = txt("DUROV MSG", 30, Color.WHITE);
+        TextView logo = txt("✈️", 72, Color.WHITE);
+        logo.setGravity(Gravity.CENTER);
+        l.addView(logo, ff());
+
+        TextView title = txt("DUROV MSG", 34, Color.WHITE);
         title.setGravity(Gravity.CENTER);
         l.addView(title, ff());
-        l.addView(txt("Настоящий мессенджер. Без номеров и почты.", 14, Color.parseColor("#8a90a8")), ff());
-        l.addView(sp(36));
+        l.addView(sp(6));
+        TextView sub = txt("Приватный мессенджер с E2E.\nЧат, группа, канал, кошелёк и NFT — начиная с себя.", 14, Color.parseColor("#8a90a8"));
+        sub.setGravity(Gravity.CENTER);
+        sub.setTextSize(15);
+        l.addView(sub, ff());
+        l.addView(sp(40));
 
-        final EditText host = input(serverHost, "Например ws://192.168.1.2:9173");
-        l.addView(host, ff());
+        if (accounts.list.isEmpty()) {
+            Button start = btn("Начать общение", this::showRegisterScreen);
+            start.setBackgroundColor(Color.parseColor("#1f8fff"));
+            start.setTextColor(Color.WHITE);
+            start.setTextSize(18);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 56);
+            l.addView(start, lp);
+            l.addView(sp(10));
+            Button tar = btn("Войти в аккаунт", this::showLoginScreen);
+            tar.setBackgroundColor(Color.parseColor("#232838"));
+            l.addView(tar, ff());
+        } else {
+            l.addView(txt("Мой аккаунт:", 14, Color.parseColor("#8a90a8")), ff());
+            l.addView(sp(8));
+            for (JSONObject a : accounts.list) {
+                LinearLayout card = row();
+                card.setPadding(18, 16, 18, 16);
+                card.setBackgroundColor(Color.parseColor("#1b1e2a"));
+                TextView nm = txt(a.optString("nickname", "@" + a.optString("username")) + "  " + "(@" + a.optString("username") + ")", 17, Color.WHITE);
+                if (a.optBoolean("active")) nm.setTextColor(Color.parseColor("#1f8fff"));
+                card.addView(nm, ff());
+                card.setOnClickListener(v -> {
+                    serverHost = a.optString("host", serverHost);
+                    saveHost();
+                    token = a.optString("token");
+                    try { if (!a.optString("publicJwk").isEmpty()) crypto.setIdentity(a.optString("publicJwk"), a.optString("privateJwk")); } catch (Exception ignored) {}
+                    meUid = a.optString("uid");
+                    showChatsScreen();
+                    connect();
+                });
+                l.addView(card, ff());
+                l.addView(sp(10));
+            }
+            l.addView(sp(8));
+            Button add = btn("＋ Добавить аккаунт", this::showRegisterScreen);
+            add.setBackgroundColor(Color.parseColor("#232838"));
+            l.addView(add, ff());
+            l.addView(sp(10));
+            Button log = btn("Войти по ключу", this::showLoginScreen);
+            log.setBackgroundColor(Color.parseColor("#232838"));
+            l.addView(log, ff());
+        }
+
+        l.addView(sp(28));
+        TextView hostLbl = txt("Сервер: " + serverHost, 13, Color.parseColor("#5a6070"));
+        hostLbl.setGravity(Gravity.CENTER);
+        l.addView(hostLbl, ff());
+        l.addView(sp(4));
+        TextView chg = txt("изменить адрес сервера", 14, Color.parseColor("#1f8fff"));
+        chg.setGravity(Gravity.CENTER);
+        chg.setOnClickListener(v -> inputDialog("Адрес сервера", serverHost, false, h -> {
+            updateHost(h.trim());
+            showConnectScreen();
+        }));
+        l.addView(chg, ff());
+
+        setScreen(l);
+    }
+
+    void showRegisterScreen() {
+        LinearLayout l = col();
+        l.setPadding(32, 64, 32, 32);
+
+        TextView title = txt("Создать аккаунт", 26, Color.WHITE);
+        l.addView(title, ff());
         l.addView(sp(8));
-        final EditText nick = input("", "Ник");
-        l.addView(nick, ff());
-        final EditText user = input("", "Юзернейм (a-z 0-9 _, 3-32)");
-        l.addView(user, ff());
-        final EditText ownerCode = input("", "Код владельца (если есть)");
-        l.addView(ownerCode, ff());
-        l.addView(sp(16));
+        l.addView(txt("Ник виден всем в чате. Юзернейм — твой адрес: @ник.", 14, Color.parseColor("#8a90a8")), ff());
+        l.addView(sp(28));
 
-        l.addView(btn("Зарегистрироваться", () -> {
-            updateHost(host.getText().toString().trim());
-            String u = user.getText().toString().trim().toLowerCase();
+        final EditText nick = input("", "Например: Павел");
+        nick.setHintTextColor(Color.parseColor("#5a6070"));
+        l.addView(nick, ff());
+        l.addView(sp(12));
+        final EditText user = input("", "Придумай юзернейм: pavel_d");
+        user.setHintTextColor(Color.parseColor("#5a6070"));
+        l.addView(user, ff());
+        l.addView(sp(28));
+
+        Button reg = btn("Зарегистрироваться", () -> {
+            String u = user.getText().toString().trim().toLowerCase().replaceAll("^@", "");
             String n = nick.getText().toString().trim();
             if (n.isEmpty()) { toast("Придумай ник 😉"); return; }
+            if (u.length() < 3) { toast("Юзернейм — минимум 3 символа"); return; }
+            toast("🛰 Создаю аккаунт и ключи…");
             new Thread(() -> {
                 try {
                     crypto.generateIdentity();
@@ -758,7 +860,6 @@ public class MainActivity extends Activity {
                             o.put("username", u);
                             o.put("nickname", n);
                             o.put("pubkey", crypto.getPublic());
-                            o.put("ownerCode", ownerCode.getText().toString().trim());
                             send(o);
                         } catch (JSONException ignored) {}
                     });
@@ -766,32 +867,16 @@ public class MainActivity extends Activity {
                     ui.post(() -> toast("Не удалось сгенерировать ключи"));
                 }
             }).start();
-        }), ff());
+        });
+        reg.setBackgroundColor(Color.parseColor("#1f8fff"));
+        reg.setTextSize(17);
+        l.addView(reg, ff());
+        l.addView(sp(12));
+        Button back = btn("← Назад", this::showConnectScreen);
+        back.setBackgroundColor(Color.parseColor("#232838"));
+        l.addView(back, ff());
 
-        l.addView(sp(8));
-        l.addView(btn("Войти по ключу", () -> {
-            updateHost(host.getText().toString().trim());
-            showLoginScreen();
-        }), ff());
-
-        if (!accounts.list.isEmpty()) {
-            l.addView(sp(16));
-            l.addView(txt("Аккаунты:", 16, Color.parseColor("#8a90a8")), ff());
-            for (JSONObject a : accounts.list) {
-                String label = "👤 @" + a.optString("username") + " — " + a.optString("nickname") + " (" + a.optString("host") + ")";
-                l.addView(btn(label, () -> {
-                    serverHost = a.optString("host", serverHost);
-                    saveHost();
-                    token = a.optString("token");
-                    try { if (!a.optString("publicJwk").isEmpty()) crypto.setIdentity(a.optString("publicJwk"), a.optString("privateJwk")); } catch (Exception ignored) {}
-                    meUid = a.optString("uid");
-                    showChatsScreen();
-                    connect();
-                }), ff());
-            }
-        }
-        sc.addView(l);
-        setScreen(sc);
+        setScreen(l);
     }
 
     void updateHost(String h) {
@@ -816,8 +901,8 @@ public class MainActivity extends Activity {
         l.addView(btn("Войти по ключу", () -> {
             String tk = tok.getText().toString().trim();
             if (tk.isEmpty()) { toast("Введи ключ"); return; }
+            toast("🛰 Подключаюсь…");
             token = tk;
-            showChatsScreen();
             connect();
         }), ff());
         l.addView(sp(8));
@@ -892,20 +977,126 @@ public class MainActivity extends Activity {
             public Object getItem(int i) { return items.get(i); }
             public long getItemId(int i) { return i; }
             public View getView(int i, View c, ViewGroup p) {
-                TextView t = new TextView(MainActivity.this);
                 JSONObject ch = items.get(i);
-                String title = chatTitle(ch);
+                LinearLayout rowL = new LinearLayout(MainActivity.this);
+                rowL.setOrientation(LinearLayout.HORIZONTAL);
+                rowL.setGravity(Gravity.CENTER_VERTICAL);
+                rowL.setPadding(18, 14, 18, 14);
+                rowL.setBackgroundColor(Color.parseColor("#12151f"));
+
+                TextView avatar = new TextView(MainActivity.this);
+                avatar.setText(chatIcon(ch));
+                avatar.setTextSize(30);
+                avatar.setGravity(Gravity.CENTER);
+                avatar.setBackgroundColor(Color.parseColor("#1f8fff"));
+                LinearLayout.LayoutParams avlp = new LinearLayout.LayoutParams(56, 56);
+                avlp.setMargins(0, 0, 14, 0);
+                avatar.setLayoutParams(avlp);
+                rowL.addView(avatar);
+
+                LinearLayout mid = new LinearLayout(MainActivity.this);
+                mid.setOrientation(LinearLayout.VERTICAL);
+                mid.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                TextView name = new TextView(MainActivity.this);
+                name.setText(chatTitle(ch));
+                name.setTextSize(17);
+                name.setTextColor(Color.WHITE);
+                mid.addView(name);
+                TextView last = new TextView(MainActivity.this);
+                last.setText(chatPreview(ch));
+                last.setTextSize(13);
+                last.setTextColor(Color.parseColor("#8a90a8"));
+                last.setMaxLines(1);
+                mid.addView(last);
+                rowL.addView(mid);
+
                 int unread = ch.optInt("unread");
-                String un = unread > 0 ? "  (" + unread + ")" : "";
-                t.setText((ch.optString("type").equals("channel") ? "📢 " : ch.optString("type").equals("group") ? "👥 " : "💬 ") + title + un);
-                t.setTextColor(Color.WHITE);
-                t.setTextSize(18);
-                t.setPadding(20, 18, 20, 18);
-                t.setTextColor(unread > 0 ? Color.parseColor("#ffd54f") : Color.WHITE);
-                t.setOnClickListener(v -> openChat(ch.optString("id")));
-                return t;
+                LinearLayout right = new LinearLayout(MainActivity.this);
+                right.setOrientation(LinearLayout.VERTICAL);
+                right.setGravity(Gravity.CENTER_HORIZONTAL);
+                TextView time = new TextView(MainActivity.this);
+                time.setText(fmtChatTime(ch.optLong("lastTs")));
+                time.setTextSize(12);
+                time.setTextColor(Color.parseColor("#5a6070"));
+                right.addView(time);
+                if (unread > 0) {
+                    TextView badge = new TextView(MainActivity.this);
+                    badge.setText(String.valueOf(unread));
+                    badge.setTextSize(13);
+                    badge.setTextColor(Color.WHITE);
+                    badge.setGravity(Gravity.CENTER);
+                    badge.setBackgroundColor(Color.parseColor("#1f8fff"));
+                    right.addView(badge);
+                }
+                rowL.addView(right);
+
+                rowL.setOnClickListener(v -> {
+                    JSONObject chatX = chats.get(ch.optString("id"));
+                    if (chatX != null) { try { chatX.put("unread", 0); } catch (JSONException ignored) {} }
+                    renderChatList();
+                    openChat(ch.optString("id"));
+                });
+                return rowL;
             }
         });
+    }
+
+    String chatIcon(JSONObject c) {
+        String t = c.optString("type");
+        if (t.equals("group")) return "👥";
+        if (t.equals("channel")) return "📢";
+        return "💬";
+    }
+
+    String chatPreview(JSONObject ch) {
+        JSONObject last = ch.optJSONObject("last");
+        if (last == null) return "";
+        if (last.optBoolean("deleted")) return "Сообщение удалено";
+        String kind = last.optString("kind", "text");
+        String sender = "";
+        if (!last.optString("sender", "").equals(meUid)) {
+            JSONObject u = myUsers.get(last.optString("sender"));
+            if (u != null) sender = u.optString("nickname", u.optString("username", "")) + ": ";
+        }
+        String body;
+        switch (kind) {
+            case "image": body = "🖼 Фото"; break;
+            case "file": body = "📄 Файл"; break;
+            case "voice": body = "🎤 Голосовое"; break;
+            case "gif": body = "🎬 GIF"; break;
+            case "sticker": body = "🙂 Стикер"; break;
+            case "card": body = "🪪 Визитка"; break;
+            case "system": return "📌 " + last.optString("payload", "");
+            default: {
+                JSONObject p = last.optJSONObject("payload");
+                if (p != null) {
+                    body = (p.has("text") ? p.optString("text") : p.optString("url", ""));
+                } else if (last.has("cipher")) {
+                    body = decrypted.get(last.optString("id"));
+                    if (body == null) body = "🔒 Зашифровано";
+                } else {
+                    body = last.optString("payload", "");
+                }
+            }
+        }
+        return sender + body;
+    }
+
+    String fmtChatTime(long ts) {
+        if (ts <= 0) return "";
+        return fmtTime(ts);
+    }
+
+    String fmtTime(long ts) {
+        if (ts <= 0) return "";
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.setTimeInMillis(ts);
+        java.util.Calendar now = java.util.Calendar.getInstance();
+        if (cal.get(java.util.Calendar.YEAR) != now.get(java.util.Calendar.YEAR) ||
+                cal.get(java.util.Calendar.DAY_OF_YEAR) != now.get(java.util.Calendar.DAY_OF_YEAR)) {
+            return new java.text.SimpleDateFormat("dd.MM", java.util.Locale.getDefault()).format(new java.util.Date(ts));
+        }
+        return new java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(new java.util.Date(ts));
     }
 
     String chatTitle(JSONObject c) {
@@ -1881,11 +2072,5 @@ public class MainActivity extends Activity {
                 }
                 return prefix + text + (m.optBoolean("edited", false) ? " (ред.)" : "");
         }
-    }
-
-    String fmtTime(long ts) {
-        if (ts <= 0) return "";
-        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault());
-        return sdf.format(new java.util.Date(ts));
     }
 }
