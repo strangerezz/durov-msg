@@ -173,6 +173,7 @@ public class MainActivity extends Activity {
         ws = new WsClient(finUrl, new WsClient.Listener() {
             @Override public void onOpen(WsClient w) {
                 ui.post(() -> {
+                    updatingConnStatus("соединено ✓");
                     if (token != null && !token.isEmpty()) {
                         try {
                             JSONObject o = new JSONObject();
@@ -182,6 +183,7 @@ public class MainActivity extends Activity {
                             w.sendText(o.toString());
                         } catch (JSONException ignored) {}
                     }
+                    flushPending();
                 });
             }
             @Override public void onMessage(String text) {
@@ -192,7 +194,7 @@ public class MainActivity extends Activity {
             @Override public void onClose(int code, String reason) {
                 ui.post(() -> {
                     if (switching) { switching = false; return; }
-                    toast("⚠️ Потеряно соединение. Переподключение…");
+                    updatingConnStatus("соединение разорвано");
                     if (!reconnectPending) {
                         reconnectPending = true;
                         ui.postDelayed(() -> { reconnectPending = false; connect(); }, 2000);
@@ -200,14 +202,40 @@ public class MainActivity extends Activity {
                 });
             }
             @Override public void onError(Exception e) {
-                ui.post(() -> { if (ws != null) ws.close(1001, "err"); });
+                ui.post(() -> {
+                    updatingConnStatus("не удалось подключиться к серверу");
+                    if (ws != null) ws.close(1001, "err");
+                });
             }
         });
         ws.connect();
     }
 
+    final List<JSONObject> pendingCommands = new ArrayList<>();
+
     void send(JSONObject o) {
-        if (ws != null && ws.isOpen()) ws.sendText(o.toString());
+        if (ws != null && ws.isOpen()) {
+            ws.sendText(o.toString());
+        } else {
+            pendingCommands.add(o);
+            if (connectedStatus != null) updatingConnStatus("подключаюсь…");
+            connect();
+        }
+    }
+
+    void flushPending() {
+        if (pendingCommands.isEmpty() || ws == null || !ws.isOpen()) return;
+        List<JSONObject> flush = new ArrayList<>(pendingCommands);
+        pendingCommands.clear();
+        for (JSONObject o : flush) ws.sendText(o.toString());
+    }
+
+    TextView connectedStatus;
+
+    void updatingConnStatus(String s) {
+        if (connectedStatus != null) {
+            connectedStatus.setText("🛜 " + s);
+        }
     }
 
     JSONObject o(String t) {
@@ -823,7 +851,15 @@ public class MainActivity extends Activity {
         }));
         l.addView(chg, ff());
 
+        connectedStatus = null;
         setScreen(l);
+        connectedStatus = new TextView(this);
+        connectedStatus.setText("🛜 подключаюсь…");
+        connectedStatus.setTextSize(13);
+        connectedStatus.setTextColor(Color.parseColor("#8a90a8"));
+        connectedStatus.setGravity(Gravity.CENTER);
+        l.addView(connectedStatus, ff());
+        connect();
     }
 
     void showRegisterScreen() {
@@ -875,8 +911,17 @@ public class MainActivity extends Activity {
         Button back = btn("← Назад", this::showConnectScreen);
         back.setBackgroundColor(Color.parseColor("#232838"));
         l.addView(back, ff());
+        l.addView(sp(24));
+
+        connectedStatus = new TextView(this);
+        connectedStatus.setText("🛜 подключаюсь…");
+        connectedStatus.setTextSize(13);
+        connectedStatus.setTextColor(Color.parseColor("#8a90a8"));
+        connectedStatus.setGravity(Gravity.CENTER);
+        l.addView(connectedStatus, ff());
 
         setScreen(l);
+        connect();
     }
 
     void updateHost(String h) {
@@ -903,7 +948,12 @@ public class MainActivity extends Activity {
             if (tk.isEmpty()) { toast("Введи ключ"); return; }
             toast("🛰 Подключаюсь…");
             token = tk;
-            connect();
+            JSONObject o = o("login");
+            try {
+                o.put("token", tk);
+                if (crypto.hasIdentity()) o.put("pubkey", crypto.getPublic());
+            } catch (JSONException ignored) {}
+            send(o);
         }), ff());
         l.addView(sp(8));
         l.addView(btn("Импорт из бэкапа", () -> {
@@ -917,8 +967,16 @@ public class MainActivity extends Activity {
         }), ff());
         l.addView(sp(8));
         l.addView(btn("← Назад", this::showConnectScreen), ff());
+
+        connectedStatus = new TextView(this);
+        connectedStatus.setText("🛜 подключаюсь…");
+        connectedStatus.setTextSize(13);
+        connectedStatus.setTextColor(Color.parseColor("#8a90a8"));
+        connectedStatus.setGravity(Gravity.CENTER);
+        l.addView(connectedStatus, ff());
         sc.addView(l);
         setScreen(sc);
+        connect();
     }
 
     EditText input(String def, String hint) {
