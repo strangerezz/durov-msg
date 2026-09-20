@@ -63,6 +63,19 @@ npm start
 ./dist/DUROV\ MSG-*.AppImage
 ```
 
+## Android (APK)
+
+WebView-клиент (`android/`), открывает веб-клиент по адресу сервера (IP + порт 9173).
+Сборка вручную через Android SDK (aapt2/d8/apksigner), Gradle не нужен:
+
+```bash
+./android/build.sh
+```
+
+Требует JDK 17+ и Android SDK в `/opt/android-sdk` (или `ANDROID_HOME`).
+Готовый файл — `dist/durov-msg-0.4.0.apk`. При запуске введи адрес сервера,
+например `http://192.168.1.2:9173` (телефон и ПК в одной сети).
+
 ## Структура
 
 ```
