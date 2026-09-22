@@ -3,3 +3,7 @@ data/
 dist/
 *.log
 .wine
+android/build/
+android/*.keystore
+android/.gradle/
+local.properties

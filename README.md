@@ -41,12 +41,24 @@ npm start
 
 Открой **http://localhost:9173** в браузере. Открой в двух окнах/устройствах — и переписывайся.
 
-## Запуск на Linux (CachyOS и др.)
+## Запуск на Linux (в нативном окне, не в браузере)
+
+Скачай **AppImage** из релизов и установи — появится пункт «DUROV MSG» в меню приложений:
 
 ```bash
-./scripts/run.sh
+# установка из папки репозитория (ставит AppImage, иконку и ярлык в меню)
+./scripts/install-linux.sh './dist/DUROV.MSG-0.6.0.AppImage'
+
+# либо установка из одного скачанного AppImage — можно прямо из исходников:
+# ./install-linux.sh '/путь/к/DUROV.MSG-0.6.0.AppImage'
 ```
-Открой http://localhost:9173
+
+После этого запускай как обычную программу — из меню (KDE/GNOME/…) или командой `durov-msg` из терминала. Откроется **нативное окно приложения** (Electron), которое само поднимает сервер внутри себя — никакого браузера и localhost руками.
+
+Помощь при проблемах:
+
+- Если окно не появляется, запусти с диагностикой: `durov-msg --no-sandbox`
+- Удаление: `rm -rf ~/.local/share/durov-msg ~/.local/share/applications/durov-msg.desktop`
 
 ## Настольная версия (exe / AppImage)
 
@@ -58,10 +70,11 @@ npm start
 ./scripts/build-win.bat
 ```
 
-Готовые файлы появятся в `dist/`. AppImage запускается из-под CachyOS:
-```bash
-./dist/DUROV\ MSG-*.AppImage
-```
+Готовые файлы появятся в `dist/`. Linux-версия запускается с нативным окном (см. раздел «Запуск на Linux»).
+
+### Веб-режим (бэкенд/разработка)
+
+Браузер — только для разработки сервера: `./scripts/run.sh`, затем открой http://localhost:9173. Обычным пользователям Linux нужен AppImage выше.
 
 ## Android (APK)
 

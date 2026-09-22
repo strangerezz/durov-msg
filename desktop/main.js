@@ -5,6 +5,19 @@ const net = require('net');
 let win = null;
 let server = null;
 
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+  });
+}
+
 function findFreePort(base) {
   return new Promise((resolve) => {
     const srv = net.createServer();
@@ -70,18 +83,20 @@ function createWindow(port) {
   Menu.setApplicationMenu(menu);
 }
 
-app.whenReady().then(async () => {
-  const port = await startServer();
-  createWindow(port);
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow(port);
+if (gotLock) {
+  app.whenReady().then(async () => {
+    const port = await startServer();
+    createWindow(port);
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow(port);
+    });
   });
-});
 
-app.on('window-all-closed', () => {
-  app.quit();
-});
+  app.on('window-all-closed', () => {
+    app.quit();
+  });
 
-app.on('before-quit', () => {
-  if (server && server.server) { try { server.server.close(); } catch {} }
-});
+  app.on('before-quit', () => {
+    if (server && server.server) { try { server.server.close(); } catch {} }
+  });
+}
